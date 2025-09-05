@@ -477,21 +477,145 @@ def build_ml_model(df):
         target_counts = df_clean[target_col].value_counts()
         min_class_size = target_counts.min()
         
-        if min_class_size < 2:
-            st.error(f"❌ Некоторые классы имеют менее 2 записей. Минимальный размер класса: {min_class_size}")
-            st.write("**Распределение классов:**")
-            st.dataframe(target_counts, width='stretch')
-            return
+        # Если слишком много уникальных значений или мало записей в классах
+        if unique_targets > 100 or min_class_size < 2:
+            st.warning(f"⚠️ **Проблема с данными:**")
+            st.write(f"- Уникальных значений: {unique_targets}")
+            st.write(f"- Минимальный размер класса: {min_class_size}")
+            
+            # Предлагаем варианты решения
+            st.subheader("🔧 Варианты решения:")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.write("**1. Группировка редких классов**")
+                min_samples = st.slider(
+                    "Минимальное количество записей для класса:",
+                    min_value=2,
+                    max_value=50,
+                    value=5,
+                    help="Классы с меньшим количеством записей будут объединены в 'Другие'"
+                )
+                
+                if st.button("Применить группировку"):
+                    # Группируем редкие классы
+                    df_grouped = df_clean.copy()
+                    target_counts = df_clean[target_col].value_counts()
+                    
+                    # Находим классы с достаточным количеством записей
+                    frequent_classes = target_counts[target_counts >= min_samples].index
+                    
+                    # Заменяем редкие классы на 'Другие'
+                    df_grouped[target_col] = df_grouped[target_col].apply(
+                        lambda x: x if x in frequent_classes else 'Другие'
+                    )
+                    
+                    st.success(f"✅ Группировка применена! Теперь {df_grouped[target_col].nunique()} классов")
+                    
+                    # Показываем новое распределение
+                    new_counts = df_grouped[target_col].value_counts()
+                    st.write("**Новое распределение классов:**")
+                    st.dataframe(new_counts, width='stretch')
+                    
+                    # Продолжаем с группированными данными
+                    df_clean = df_grouped
+            
+            with col2:
+                st.write("**2. Альтернативный анализ**")
+                st.write("Вместо ML модели можно провести:")
+                st.write("• Анализ корреляций")
+                st.write("• Статистический анализ")
+                st.write("• Визуализация зависимостей")
+                
+                if st.button("Перейти к корреляционному анализу"):
+                    st.subheader("🔗 Корреляционный анализ")
+                    
+                    # Выбираем числовые столбцы для корреляционного анализа
+                    numeric_cols = df_clean.select_dtypes(include=[np.number]).columns
+                    
+                    if len(numeric_cols) > 1:
+                        # Вычисляем корреляции
+                        correlation_matrix = df_clean[numeric_cols].corr()
+                        
+                        # Создаем тепловую карту
+                        fig = px.imshow(
+                            correlation_matrix,
+                            title="Корреляционная матрица числовых переменных",
+                            color_continuous_scale='RdBu',
+                            aspect='auto'
+                        )
+                        st.plotly_chart(fig, width='stretch')
+                        
+                        # Показываем сильные корреляции
+                        strong_correlations = []
+                        for i in range(len(numeric_cols)):
+                            for j in range(i+1, len(numeric_cols)):
+                                corr_value = correlation_matrix.iloc[i, j]
+                                if abs(corr_value) > 0.5:
+                                    strong_correlations.append({
+                                        'Переменная 1': numeric_cols[i],
+                                        'Переменная 2': numeric_cols[j],
+                                        'Корреляция': round(corr_value, 3)
+                                    })
+                        
+                        if strong_correlations:
+                            st.write("**Сильные корреляции (>0.5):**")
+                            st.dataframe(pd.DataFrame(strong_correlations), width='stretch')
+                        else:
+                            st.info("Сильных корреляций не найдено")
+                    else:
+                        st.warning("Недостаточно числовых столбцов для корреляционного анализа")
+                    
+                    return
+            
+            # Если группировка не была применена, выходим
+            if 'df_grouped' not in locals():
+                st.info("👆 Выберите один из вариантов выше для продолжения")
+                return
         
         st.write(f"**Минимальный размер класса:** {min_class_size}")
         
-        # Кодирование категориальных переменных
-        categorical_cols = df_clean.select_dtypes(include=['object']).columns
-        numerical_cols = df_clean.select_dtypes(include=[np.number]).columns
+        # Показываем информацию о данных
+        st.success("✅ Данные подходят для машинного обучения!")
+        
+        # Показываем распределение классов
+        st.write("**Распределение классов:**")
+        target_counts = df_clean[target_col].value_counts()
+        st.dataframe(target_counts, width='stretch')
         
         # Создание копии для кодирования
         df_encoded = df_clean.copy()
         
+        # Обработка столбцов с датами
+        date_columns = []
+        for col in df_encoded.columns:
+            if df_encoded[col].dtype == 'datetime64[ns]' or 'date' in col.lower() or 'time' in col.lower():
+                date_columns.append(col)
+        
+        # Преобразуем даты в числовые признаки
+        for col in date_columns:
+            if col != target_col:
+                try:
+                    # Извлекаем год, месяц, день как отдельные признаки
+                    df_encoded[f'{col}_year'] = df_encoded[col].dt.year
+                    df_encoded[f'{col}_month'] = df_encoded[col].dt.month
+                    df_encoded[f'{col}_day'] = df_encoded[col].dt.day
+                    df_encoded[f'{col}_dayofweek'] = df_encoded[col].dt.dayofweek
+                    
+                    # Удаляем оригинальный столбец с датой
+                    df_encoded = df_encoded.drop(columns=[col])
+                    st.info(f"📅 Столбец {col} преобразован в числовые признаки")
+                except Exception as e:
+                    st.warning(f"Не удалось обработать столбец с датой {col}: {e}")
+                    # Удаляем проблемный столбец
+                    df_encoded = df_encoded.drop(columns=[col])
+        
+        # Теперь определяем типы столбцов после обработки дат
+        categorical_cols = df_encoded.select_dtypes(include=['object']).columns
+        numerical_cols = df_encoded.select_dtypes(include=[np.number]).columns
+        
+        # Кодирование категориальных переменных
         label_encoders = {}
         for col in categorical_cols:
             if col != target_col:
@@ -508,8 +632,8 @@ def build_ml_model(df):
         target_encoder = LabelEncoder()
         df_encoded[target_col] = target_encoder.fit_transform(df_encoded[target_col].astype(str))
         
-        # Выбор признаков
-        feature_cols = [col for col in df_encoded.columns if col != target_col]
+        # Выбор признаков (только числовые столбцы)
+        feature_cols = [col for col in df_encoded.select_dtypes(include=[np.number]).columns if col != target_col]
         
         if len(feature_cols) > 0:
             X = df_encoded[feature_cols]
@@ -517,6 +641,23 @@ def build_ml_model(df):
             
             st.write(f"**Количество признаков:** {len(feature_cols)}")
             st.write(f"**Размер данных:** {len(X)} записей")
+            
+            # Показываем информацию о признаках
+            st.write("**Используемые признаки:**")
+            feature_info = pd.DataFrame({
+                'Признак': feature_cols,
+                'Тип': [str(df_encoded[col].dtype) for col in feature_cols],
+                'Уникальных значений': [df_encoded[col].nunique() for col in feature_cols]
+            })
+            st.dataframe(feature_info, width='stretch')
+            
+            # Проверяем на пропущенные значения
+            missing_values = X.isnull().sum().sum()
+            if missing_values > 0:
+                st.warning(f"⚠️ Найдено {missing_values} пропущенных значений в признаках")
+                # Заполняем пропущенные значения
+                X = X.fillna(X.mean())
+                st.info("✅ Пропущенные значения заполнены средними значениями")
             
             # Проверяем, можно ли использовать stratify
             can_stratify = all(target_counts >= 2)
@@ -533,8 +674,8 @@ def build_ml_model(df):
                 )
                 st.warning("⚠️ Используется разделение без stratify из-за недостаточного количества данных в некоторых классах")
             
-            print(f"📊 Размер обучающей выборки: {len(X_train)}")
-            print(f"📊 Размер тестовой выборки: {len(X_test)}")
+            st.write(f"📊 Размер обучающей выборки: {len(X_train)}")
+            st.write(f"📊 Размер тестовой выборки: {len(X_test)}")
             
             # Обучение модели
             try:
@@ -639,7 +780,65 @@ def build_ml_model(df):
                 st.error(f"Ошибка при обучении модели: {e}")
                 
         else:
-            st.error("Недостаточно признаков для построения модели")
+            st.error("❌ Недостаточно признаков для построения модели")
+            st.write("**Возможные причины:**")
+            st.write("• Все столбцы содержат только категориальные данные")
+            st.write("• Столбцы с датами не удалось преобразовать")
+            st.write("• Недостаточно числовых данных")
+            
+            # Предлагаем альтернативы
+            st.subheader("🔧 Альтернативные варианты:")
+            
+            if len(df_clean.select_dtypes(include=['object']).columns) > 1:
+                st.write("**1. Анализ категориальных данных:**")
+                if st.button("Показать анализ категориальных данных"):
+                    st.subheader("📊 Анализ категориальных данных")
+                    
+                    categorical_cols = df_clean.select_dtypes(include=['object']).columns
+                    
+                    for col in categorical_cols[:5]:  # Показываем первые 5 столбцов
+                        if col != target_col:
+                            st.write(f"**Столбец: {col}**")
+                            value_counts = df_clean[col].value_counts().head(10)
+                            
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                st.dataframe(value_counts, width='stretch')
+                            
+                            with col2:
+                                fig = px.bar(
+                                    x=value_counts.values,
+                                    y=value_counts.index,
+                                    title=f"Распределение {col}",
+                                    orientation='h'
+                                )
+                                st.plotly_chart(fig, width='stretch')
+            
+            if len(df_clean.select_dtypes(include=[np.number]).columns) > 0:
+                st.write("**2. Статистический анализ числовых данных:**")
+                if st.button("Показать статистический анализ"):
+                    st.subheader("📈 Статистический анализ числовых данных")
+                    
+                    numeric_cols = df_clean.select_dtypes(include=[np.number]).columns
+                    
+                    if len(numeric_cols) > 0:
+                        # Описательная статистика
+                        st.write("**Описательная статистика:**")
+                        st.dataframe(df_clean[numeric_cols].describe(), width='stretch')
+                        
+                        # Корреляции
+                        if len(numeric_cols) > 1:
+                            st.write("**Корреляции между числовыми переменными:**")
+                            correlation_matrix = df_clean[numeric_cols].corr()
+                            
+                            fig = px.imshow(
+                                correlation_matrix,
+                                title="Корреляционная матрица",
+                                color_continuous_scale='RdBu',
+                                aspect='auto'
+                            )
+                            st.plotly_chart(fig, width='stretch')
     else:
         st.warning("Выберите целевую переменную для анализа")
 
