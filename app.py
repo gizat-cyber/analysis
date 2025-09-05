@@ -25,6 +25,62 @@ st.set_page_config(
 st.title("👥 Анализ данных о найме сотрудников")
 st.markdown("---")
 
+# Функция для работы с фильтром по годам
+def apply_year_filter(df, selected_year):
+    """Применяет фильтр по году к DataFrame"""
+    if selected_year == "Все время":
+        return df
+    
+    # Ищем столбцы с датами
+    date_columns = []
+    for col in df.columns:
+        if any(keyword in col.lower() for keyword in ['date', 'дата', 'time', 'время']):
+            date_columns.append(col)
+    
+    if not date_columns:
+        st.warning("⚠️ Не найдены столбцы с датами для фильтрации по годам")
+        return df
+    
+    # Используем первый найденный столбец с датой
+    date_col = date_columns[0]
+    
+    try:
+        # Преобразуем в datetime
+        df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
+        
+        # Фильтруем по году
+        filtered_df = df[df[date_col].dt.year == selected_year].copy()
+        
+        st.info(f"📅 Применен фильтр по году: {selected_year}. Найдено {len(filtered_df)} записей из {len(df)}")
+        
+        return filtered_df
+        
+    except Exception as e:
+        st.error(f"❌ Ошибка при применении фильтра по году: {e}")
+        return df
+
+# Функция для получения доступных годов
+def get_available_years(df):
+    """Получает список доступных годов из данных"""
+    years = ["Все время"]
+    
+    # Ищем столбцы с датами
+    date_columns = []
+    for col in df.columns:
+        if any(keyword in col.lower() for keyword in ['date', 'дата', 'time', 'время']):
+            date_columns.append(col)
+    
+    if date_columns:
+        try:
+            date_col = date_columns[0]
+            df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
+            available_years_list = sorted(df[date_col].dt.year.dropna().unique().astype(int))
+            years.extend(available_years_list)
+        except Exception as e:
+            st.warning(f"⚠️ Не удалось извлечь годы из данных: {e}")
+    
+    return years
+
 # Функция для автоматической загрузки встроенных данных
 @st.cache_data
 def load_builtin_data():
@@ -914,6 +970,27 @@ def create_dashboard(df):
     """Создает информативный дашборд с ключевыми метриками"""
     st.subheader("📊 Дашборд ключевых показателей")
     
+    # Показываем информацию о периоде анализа
+    if len(df) > 0:
+        # Определяем период данных
+        date_columns = []
+        for col in df.columns:
+            if any(keyword in col.lower() for keyword in ['date', 'дата', 'time', 'время']):
+                date_columns.append(col)
+        
+        if date_columns:
+            try:
+                date_col = date_columns[0]
+                df_temp = df.copy()
+                df_temp[date_col] = pd.to_datetime(df_temp[date_col], errors='coerce')
+                min_date = df_temp[date_col].min()
+                max_date = df_temp[date_col].max()
+                
+                if pd.notna(min_date) and pd.notna(max_date):
+                    st.info(f"📅 **Период анализа:** {min_date.strftime('%d.%m.%Y')} - {max_date.strftime('%d.%m.%Y')}")
+            except:
+                pass
+    
     # Основные метрики
     col1, col2, col3, col4 = st.columns(4)
     
@@ -1012,6 +1089,20 @@ def main():
         - **Тип:** Данные о найме сотрудников
         """)
         
+        # Фильтр по годам
+        st.sidebar.markdown("---")
+        st.sidebar.title("📅 Фильтр по годам")
+        
+        available_years = get_available_years(df)
+        selected_year = st.sidebar.selectbox(
+            "Выберите год для анализа:",
+            available_years,
+            help="Выберите конкретный год или 'Все время' для анализа всех данных"
+        )
+        
+        # Применяем фильтр
+        filtered_df = apply_year_filter(df, selected_year)
+        
         # Навигация по разделам
         st.sidebar.markdown("---")
         st.sidebar.title("📊 Разделы анализа")
@@ -1022,28 +1113,28 @@ def main():
         )
         
         if page == "Дашборд":
-            create_dashboard(df)
+            create_dashboard(filtered_df)
         
         elif page == "Общий обзор":
-            analyze_data(df)
+            analyze_data(filtered_df)
         
         elif page == "Детальный анализ найма":
-            detailed_hiring_analysis(df)
+            detailed_hiring_analysis(filtered_df)
         
         elif page == "Эффективность найма":
-            hiring_effectiveness_analysis(df)
+            hiring_effectiveness_analysis(filtered_df)
         
         elif page == "Расширенный анализ":
-            advanced_data_analysis(df)
+            advanced_data_analysis(filtered_df)
         
         elif page == "Тренды и паттерны":
-            trends_and_patterns_analysis(df)
+            trends_and_patterns_analysis(filtered_df)
         
         elif page == "Продолжительность работы":
-            analyze_tenure(df)
+            analyze_tenure(filtered_df)
         
         elif page == "Машинное обучение":
-            build_ml_model(df)
+            build_ml_model(filtered_df)
         
         # Дополнительная информация
         st.sidebar.markdown("---")
@@ -1084,38 +1175,52 @@ def main():
             if df is not None:
                 st.success(f"✅ Файл загружен! Размер: {df.shape[0]} строк × {df.shape[1]} столбцов")
                 
-                # Навигация по разделам
-                st.sidebar.markdown("---")
-                st.sidebar.title("📊 Разделы анализа")
-                
-                page = st.sidebar.radio(
-                    "Выберите раздел:",
-                    ["Дашборд", "Общий обзор", "Детальный анализ найма", "Эффективность найма", "Расширенный анализ", "Тренды и паттерны", "Продолжительность работы", "Машинное обучение"]
-                )
-                
-                if page == "Дашборд":
-                    create_dashboard(df)
-                
-                elif page == "Общий обзор":
-                    analyze_data(df)
-                
-                elif page == "Детальный анализ найма":
-                    detailed_hiring_analysis(df)
-                
-                elif page == "Эффективность найма":
-                    hiring_effectiveness_analysis(df)
-                
-                elif page == "Расширенный анализ":
-                    advanced_data_analysis(df)
-                
-                elif page == "Тренды и паттерны":
-                    trends_and_patterns_analysis(df)
-                
-                elif page == "Продолжительность работы":
-                    analyze_tenure(df)
-                
-                elif page == "Машинное обучение":
-                    build_ml_model(df)
+                            # Фильтр по годам
+            st.sidebar.markdown("---")
+            st.sidebar.title("📅 Фильтр по годам")
+            
+            available_years = get_available_years(df)
+            selected_year = st.sidebar.selectbox(
+                "Выберите год для анализа:",
+                available_years,
+                help="Выберите конкретный год или 'Все время' для анализа всех данных"
+            )
+            
+            # Применяем фильтр
+            filtered_df = apply_year_filter(df, selected_year)
+            
+            # Навигация по разделам
+            st.sidebar.markdown("---")
+            st.sidebar.title("📊 Разделы анализа")
+            
+            page = st.sidebar.radio(
+                "Выберите раздел:",
+                ["Дашборд", "Общий обзор", "Детальный анализ найма", "Эффективность найма", "Расширенный анализ", "Тренды и паттерны", "Продолжительность работы", "Машинное обучение"]
+            )
+            
+            if page == "Дашборд":
+                create_dashboard(filtered_df)
+            
+            elif page == "Общий обзор":
+                analyze_data(filtered_df)
+            
+            elif page == "Детальный анализ найма":
+                detailed_hiring_analysis(filtered_df)
+            
+            elif page == "Эффективность найма":
+                hiring_effectiveness_analysis(filtered_df)
+            
+            elif page == "Расширенный анализ":
+                advanced_data_analysis(filtered_df)
+            
+            elif page == "Тренды и паттерны":
+                trends_and_patterns_analysis(filtered_df)
+            
+            elif page == "Продолжительность работы":
+                analyze_tenure(filtered_df)
+            
+            elif page == "Машинное обучение":
+                build_ml_model(filtered_df)
 
 if __name__ == "__main__":
     main()
